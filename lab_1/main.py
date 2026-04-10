@@ -136,9 +136,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 
 
 def run(server_class=HTTPServer, handler_class=HealthCheckHandler):
-    # APP_HOST — адрес для пользователя/логов; в Docker слушаем 0.0.0.0, иначе проброс портов не попадёт в процесс.
-    public_host = os.getenv("APP_HOST", "localhost")
-    listen_host = "0.0.0.0"
+    app_host = os.getenv("APP_HOST", "localhost")
     port = int(os.getenv("APP_PORT", "8080"))
     raw_ttl = os.getenv("APP_USER_SESSION_TTL", "60")
     session_ttl = int(str(raw_ttl).strip().split()[0])
@@ -158,9 +156,9 @@ def run(server_class=HTTPServer, handler_class=HealthCheckHandler):
     handler_class.redis_client = client
     handler_class.session_ttl = session_ttl
 
-    server_address = (listen_host, port)
+    server_address = (app_host, port)
     httpd = server_class(server_address, handler_class)
-    print(f"Listening on {listen_host}:{port} (open http://{public_host}:{port})")
+    print(f"Listening on {app_host}:{port} (open http://{app_host}:{port})")
     httpd.serve_forever()
 
 

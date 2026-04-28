@@ -29,49 +29,49 @@ services:
 
   mongo-cfg-2:
     image: mongo:7
-    command: ["mongod", "--configsvr", "--replSet", "cfgrepl", "--port", "27017", "--bind_ip_all"]
+    command: ["mongod", "--configsvr", "--replSet", "cfgrepl", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
     volumes:
       - mongo_cfg_2:/data/configdb
 
   mongo-cfg-3:
     image: mongo:7
-    command: ["mongod", "--configsvr", "--replSet", "cfgrepl", "--port", "27017", "--bind_ip_all"]
+    command: ["mongod", "--configsvr", "--replSet", "cfgrepl", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
     volumes:
       - mongo_cfg_3:/data/configdb
 
   mongo-shard-1:
     image: mongo:7
-    command: ["mongod", "--shardsvr", "--replSet", "shardrepl", "--port", "27017", "--bind_ip_all"]
+    command: ["mongod", "--shardsvr", "--replSet", "shardrepl", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
     volumes:
       - mongo_s1:/data/db
 
   mongo-shard-2:
     image: mongo:7
-    command: ["mongod", "--shardsvr", "--replSet", "shardrepl", "--port", "27017", "--bind_ip_all"]
+    command: ["mongod", "--shardsvr", "--replSet", "shardrepl", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
     volumes:
       - mongo_s2:/data/db
 
   mongo-shard-3:
     image: mongo:7
-    command: ["mongod", "--shardsvr", "--replSet", "shardrepl", "--port", "27017", "--bind_ip_all"]
+    command: ["mongod", "--shardsvr", "--replSet", "shardrepl", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
     volumes:
       - mongo_s3:/data/db
 
   mongo-shard2-1:
     image: mongo:7
-    command: ["mongod", "--shardsvr", "--replSet", "shardrepl2", "--port", "27017", "--bind_ip_all"]
+    command: ["mongod", "--shardsvr", "--replSet", "shardrepl2", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
     volumes:
       - mongo_s2b_1:/data/db
 
   mongo-shard2-2:
     image: mongo:7
-    command: ["mongod", "--shardsvr", "--replSet", "shardrepl2", "--port", "27017", "--bind_ip_all"]
+    command: ["mongod", "--shardsvr", "--replSet", "shardrepl2", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
     volumes:
       - mongo_s2b_2:/data/db
 
   mongo-shard2-3:
     image: mongo:7
-    command: ["mongod", "--shardsvr", "--replSet", "shardrepl2", "--port", "27017", "--bind_ip_all"]
+    command: ["mongod", "--shardsvr", "--replSet", "shardrepl2", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
     volumes:
       - mongo_s2b_3:/data/db
 
@@ -81,10 +81,10 @@ services:
       [
         "mongos",
         "--configdb",
-        "cfgrepl/mongo-cfg-1:27017,mongo-cfg-2:27017,mongo-cfg-3:27017",
+        "cfgrepl/mongo-cfg-1:${MONGODB_PORT},mongo-cfg-2:${MONGODB_PORT},mongo-cfg-3:${MONGODB_PORT}",
         "--bind_ip_all",
         "--port",
-        "27017",
+        "${MONGODB_PORT}",
       ]
     depends_on:
       - mongo-cfg-1

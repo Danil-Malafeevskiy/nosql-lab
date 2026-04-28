@@ -26,6 +26,4 @@ services:
     volumes:
       - ./mongo-init:/docker-entrypoint-initdb.d:ro
     ports:
-      # Autograder expects MongoDB on localhost:27017.
-      # Host port can be overridden locally via MONGODB_HOST_PORT.
-      - "${MONGODB_HOST_PORT:-27017}:27017"
+      - "27017:27017"

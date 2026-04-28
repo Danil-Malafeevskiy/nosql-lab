@@ -26,5 +26,4 @@ services:
     volumes:
       - ./mongo-init:/docker-entrypoint-initdb.d:ro
     ports:
-      # Internal Mongo port is always 27017; host port can be changed to avoid conflicts.
-      - "${MONGODB_HOST_PORT:-27017}:27017"
+      - "${MONGODB_HOST_PORT}:${MONGODB_HOST_PORT}"

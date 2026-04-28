@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
-from urllib.parse import parse_qs, urlparse
+from datetime import timedelta, timezone
+from urllib.parse import urlparse
 
 import redis
 from bson.objectid import ObjectId
@@ -14,10 +14,203 @@ from ..deps import get_mongo, get_sessions
 from ..http import cookie_refresh, extract_sid_cookie, resp_empty, resp_json
 from ..routers.common import optional_session_refresh_set_cookie, redis_unavailable
 from ..session_service import SessionService
-from ..utils import parse_rfc3339_datetime, utc_now_rfc3339
+from ..constants import EVENT_CATEGORIES, OBJECT_ID_HEX
+from ..utils import parse_rfc3339_datetime, parse_yyyymmdd, utc_now_rfc3339
 
 
 router = APIRouter()
+
+
+def _event_to_dict(d: dict) -> dict:
+    loc = dict(d.get("location") or {})
+    loc_out = {"address": loc.get("address", "")}
+    if loc.get("city"):
+        loc_out["city"] = loc["city"]
+    return {
+        "id": str(d["_id"]),
+        "title": d["title"],
+        "category": d.get("category"),
+        "price": int(d["price"]) if d.get("price") is not None else 0,
+        "description": d["description"],
+        "location": loc_out,
+        "created_at": d["created_at"],
+        "created_by": d["created_by"],
+        "started_at": d["started_at"],
+        "finished_at": d["finished_at"],
+    }
+
+
+def _qs_map(request: Request) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for k, v in request.query_params.multi_items():
+        out.setdefault(k, []).append(v)
+    return out
+
+
+def _one_query_value(qs: dict[str, list[str]], name: str) -> tuple[str | None, bool]:
+    if name not in qs or not qs[name]:
+        return None, True
+    if len(qs[name]) != 1:
+        return None, False
+    return qs[name][0], True
+
+
+def _parse_uint_field(qs: dict[str, list[str]], name: str) -> tuple[int | None, bool]:
+    if name not in qs or not qs[name]:
+        return None, True
+    if len(qs[name]) != 1:
+        return None, False
+    v = qs[name][0]
+    if not re.fullmatch(r"[0-9]+", v):
+        return None, False
+    return int(v), True
+
+
+def _run_events_list_aggregation(mongo, qs: dict[str, list[str]], set_cookie: str | None, *, created_by_fixed: str | None):
+    limit, lok = _parse_uint_field(qs, "limit")
+    offset, ook = _parse_uint_field(qs, "offset")
+    if not lok:
+        return resp_json(400, {"message": 'invalid "limit" field'}, set_cookie)
+    if not ook:
+        return resp_json(400, {"message": 'invalid "offset" field'}, set_cookie)
+
+    title_filter, tok = _one_query_value(qs, "title")
+    if not tok:
+        return resp_json(400, {"message": 'invalid "title" field'}, set_cookie)
+
+    event_id_str, iok = _one_query_value(qs, "id")
+    if not iok:
+        return resp_json(400, {"message": 'invalid "id" field'}, set_cookie)
+    event_oid = None
+    if event_id_str is not None and event_id_str != "":
+        if not OBJECT_ID_HEX.fullmatch(event_id_str):
+            return resp_json(400, {"message": 'invalid "id" field'}, set_cookie)
+        try:
+            event_oid = ObjectId(event_id_str)
+        except Exception:
+            return resp_json(400, {"message": 'invalid "id" field'}, set_cookie)
+
+    category, cok = _one_query_value(qs, "category")
+    if not cok:
+        return resp_json(400, {"message": 'invalid "category" field'}, set_cookie)
+    if category is not None and category != "" and category not in EVENT_CATEGORIES:
+        return resp_json(400, {"message": 'invalid "category" field'}, set_cookie)
+
+    price_from, pf_ok = _parse_uint_field(qs, "price_from")
+    price_to, pt_ok = _parse_uint_field(qs, "price_to")
+    if not pf_ok:
+        return resp_json(400, {"message": 'invalid "price_from" field'}, set_cookie)
+    if not pt_ok:
+        return resp_json(400, {"message": 'invalid "price_to" field'}, set_cookie)
+
+    city, ciok = _one_query_value(qs, "city")
+    if not ciok:
+        return resp_json(400, {"message": 'invalid "city" field'}, set_cookie)
+
+    df_raw, df_ok = _one_query_value(qs, "date_from")
+    if not df_ok:
+        return resp_json(400, {"message": 'invalid "date_from" field'}, set_cookie)
+    dt_raw, dt_ok = _one_query_value(qs, "date_to")
+    if not dt_ok:
+        return resp_json(400, {"message": 'invalid "date_to" field'}, set_cookie)
+    sdf_raw, sdf_ok = _one_query_value(qs, "started_date_from")
+    if not sdf_ok:
+        return resp_json(400, {"message": 'invalid "started_date_from" field'}, set_cookie)
+    sdt_raw, sdt_ok = _one_query_value(qs, "started_date_to")
+    if not sdt_ok:
+        return resp_json(400, {"message": 'invalid "started_date_to" field'}, set_cookie)
+
+    date_from_s = df_raw or sdf_raw
+    date_to_s = dt_raw or sdt_raw
+    date_from_dt = parse_yyyymmdd(date_from_s) if date_from_s else None
+    date_to_dt = parse_yyyymmdd(date_to_s) if date_to_s else None
+    if date_from_s and date_from_dt is None:
+        fn = "date_from" if df_raw else "started_date_from"
+        return resp_json(400, {"message": f'invalid "{fn}" field'}, set_cookie)
+    if date_to_s and date_to_dt is None:
+        fn = "date_to" if dt_raw else "started_date_to"
+        return resp_json(400, {"message": f'invalid "{fn}" field'}, set_cookie)
+
+    user_name, uok = _one_query_value(qs, "user")
+    if not uok:
+        return resp_json(400, {"message": 'invalid "user" field'}, set_cookie)
+
+    match_pre: dict = {}
+    if title_filter:
+        match_pre["title"] = {"$regex": re.escape(title_filter), "$options": "i"}
+    if category:
+        match_pre["category"] = category
+    if city is not None and city != "":
+        match_pre["location.city"] = city
+    if event_oid is not None:
+        match_pre["_id"] = event_oid
+
+    if created_by_fixed is not None:
+        if user_name is not None and user_name != "":
+            try:
+                org_u = mongo.users.find_one({"username": user_name})
+            except Exception:
+                return resp_json(503, {"message": "database error"}, set_cookie)
+            if not org_u or str(org_u["_id"]) != created_by_fixed:
+                return resp_json(200, {"events": [], "count": 0}, set_cookie)
+        match_pre["created_by"] = created_by_fixed
+    elif user_name is not None and user_name != "":
+        try:
+            org = mongo.users.find_one({"username": user_name})
+        except Exception:
+            return resp_json(503, {"message": "database error"}, set_cookie)
+        if not org:
+            return resp_json(200, {"events": [], "count": 0}, set_cookie)
+        match_pre["created_by"] = str(org["_id"])
+
+    pipeline: list = []
+    if match_pre:
+        pipeline.append({"$match": match_pre})
+
+    pipeline.append(
+        {
+            "$addFields": {
+                "_eff_price": {"$ifNull": ["$price", 0]},
+                "_start_dt": {
+                    "$convert": {"input": "$started_at", "to": "date", "onError": None, "onNull": None}
+                },
+            }
+        }
+    )
+
+    match_post: dict = {}
+    if price_from is not None or price_to is not None:
+        pr = {}
+        if price_from is not None:
+            pr["$gte"] = price_from
+        if price_to is not None:
+            pr["$lte"] = price_to
+        match_post["_eff_price"] = pr
+    if date_from_dt or date_to_dt:
+        dr = {"$ne": None}
+        if date_from_dt:
+            dr["$gte"] = date_from_dt
+        if date_to_dt:
+            dr["$lte"] = date_to_dt + timedelta(days=1) - timedelta(microseconds=1)
+        match_post["_start_dt"] = dr
+    if match_post:
+        pipeline.append({"$match": match_post})
+
+    pipeline.append({"$project": {"_eff_price": 0, "_start_dt": 0}})
+
+    skip_n = offset or 0
+    if limit is not None:
+        pipeline.extend([{"$skip": skip_n}, {"$limit": limit}])
+    else:
+        pipeline.append({"$skip": skip_n})
+
+    try:
+        docs = list(mongo.events.aggregate(pipeline))
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+
+    events_out = [_event_to_dict(d) for d in docs]
+    return resp_json(200, {"events": events_out, "count": len(events_out)}, set_cookie)
 
 
 @router.post("/events")
@@ -79,6 +272,7 @@ async def events_create(request: Request, mongo=Depends(get_mongo), sessions: Se
         "created_by": user_id_hex,
         "started_at": started_at.strip(),
         "finished_at": finished_at.strip(),
+        "price": 0,
     }
 
     try:
@@ -99,65 +293,132 @@ async def events_create(request: Request, mongo=Depends(get_mongo), sessions: Se
 
 @router.get("/events")
 def events_list(request: Request, mongo=Depends(get_mongo), sessions: SessionService = Depends(get_sessions)):
+    try:
+        _sid_seen, set_cookie = optional_session_refresh_set_cookie(request, sessions)
+    except (redis.RedisError, OSError):
+        return redis_unavailable()
+    qs = _qs_map(request)
+    return _run_events_list_aggregation(mongo, qs, set_cookie, created_by_fixed=None)
+
+
+@router.get("/events/{eid}")
+def event_get_one(eid: str, request: Request, mongo=Depends(get_mongo), sessions: SessionService = Depends(get_sessions)):
+    try:
+        _sid_seen, set_cookie = optional_session_refresh_set_cookie(request, sessions)
+    except (redis.RedisError, OSError):
+        return redis_unavailable()
+    try:
+        oid = ObjectId(eid)
+    except Exception:
+        return resp_json(404, {"message": "Not found"}, set_cookie)
+    try:
+        doc = mongo.events.find_one({"_id": oid})
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+    if not doc:
+        return resp_json(404, {"message": "Not found"}, set_cookie)
+    return resp_json(200, _event_to_dict(doc), set_cookie)
+
+
+@router.patch("/events/{eid}")
+async def event_patch(eid: str, request: Request, mongo=Depends(get_mongo), sessions: SessionService = Depends(get_sessions)):
+    raw = await request.body()
     sid = extract_sid_cookie(request)
     try:
         _sid_seen, set_cookie = optional_session_refresh_set_cookie(request, sessions)
     except (redis.RedisError, OSError):
         return redis_unavailable()
 
-    parsed = urlparse(str(request.url))
-    qs = parse_qs(parsed.query, keep_blank_values=True)
-
-    def parse_uint_param(name: str):
-        if name not in qs or qs[name] == []:
-            return None, True
-        vals = qs[name]
-        if len(vals) != 1:
-            return None, False
-        v = vals[0]
-        if not re.fullmatch(r"[0-9]+", v):
-            return None, False
-        return int(v), True
-
-    limit, lok = parse_uint_param("limit")
-    offset, ook = parse_uint_param("offset")
-    if not lok:
-        return resp_json(400, {"message": 'invalid "limit" parameter'}, set_cookie)
-    if not ook:
-        return resp_json(400, {"message": 'invalid "offset" parameter'}, set_cookie)
-
-    title_filter = None
-    if "title" in qs and qs["title"]:
-        if len(qs["title"]) != 1:
-            return resp_json(400, {"message": 'invalid "title" parameter'}, set_cookie)
-        title_filter = qs["title"][0]
-
-    query = {}
-    if title_filter is not None and title_filter != "":
-        query["title"] = {"$regex": re.escape(title_filter), "$options": "i"}
+    if not sid or not sessions.exists(sid):
+        return resp_empty(401, set_cookie)
+    uid = sessions.get_user_id(sid)
+    if not uid:
+        return resp_empty(401, set_cookie)
 
     try:
-        cursor = mongo.events.find(query).skip(offset or 0)
-        if limit is not None:
-            cursor = cursor.limit(limit)
-        docs = list(cursor)
+        oid = ObjectId(eid)
+    except Exception:
+        return resp_json(
+            404,
+            {"message": "Not found. Be sure that event exists and you are the organizer"},
+            set_cookie,
+        )
+
+    if not raw:
+        data = {}
+    else:
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return resp_json(400, {"message": 'invalid "body" field'}, set_cookie)
+    if not isinstance(data, dict):
+        return resp_json(400, {"message": 'invalid "body" field'}, set_cookie)
+
+    if "category" in data:
+        v = data["category"]
+        if not isinstance(v, str) or v not in EVENT_CATEGORIES:
+            return resp_json(400, {"message": 'invalid "category" field'}, set_cookie)
+    if "price" in data:
+        p = data["price"]
+        if isinstance(p, bool):
+            return resp_json(400, {"message": 'invalid "price" field'}, set_cookie)
+        if isinstance(p, float):
+            if p < 0 or not p.is_integer():
+                return resp_json(400, {"message": 'invalid "price" field'}, set_cookie)
+            p = int(p)
+        elif isinstance(p, int):
+            if p < 0:
+                return resp_json(400, {"message": 'invalid "price" field'}, set_cookie)
+        else:
+            return resp_json(400, {"message": 'invalid "price" field'}, set_cookie)
+        data = dict(data)
+        data["price"] = p
+    if "city" in data:
+        if not isinstance(data["city"], str):
+            return resp_json(400, {"message": 'invalid "city" field'}, set_cookie)
+
+    try:
+        doc = mongo.events.find_one({"_id": oid})
     except Exception:
         return resp_json(503, {"message": "database error"}, set_cookie)
 
-    events_out = []
-    for d in docs:
-        events_out.append(
-            {
-                "id": str(d["_id"]),
-                "title": d["title"],
-                "description": d["description"],
-                "location": d["location"],
-                "created_at": d["created_at"],
-                "created_by": d["created_by"],
-                "started_at": d["started_at"],
-                "finished_at": d["finished_at"],
-            }
-        )
+    nf = {"message": "Not found. Be sure that event exists and you are the organizer"}
+    if not doc or doc.get("created_by") != uid:
+        return resp_json(404, nf, set_cookie)
 
-    return resp_json(200, {"events": events_out, "count": len(events_out)}, set_cookie)
+    loc = dict(doc.get("location") or {})
+    if "address" not in loc:
+        loc["address"] = ""
+
+    set_doc: dict = {}
+    if "category" in data:
+        set_doc["category"] = data["category"]
+    if "price" in data:
+        set_doc["price"] = data["price"]
+    if "city" in data:
+        if data["city"] == "":
+            loc.pop("city", None)
+        else:
+            loc["city"] = data["city"].strip()
+        set_doc["location"] = loc
+
+    if not set_doc:
+        try:
+            sessions.refresh(sid, utc_now_rfc3339())
+            set_cookie2 = cookie_refresh(sid, sessions.ttl)
+        except (redis.RedisError, OSError):
+            return redis_unavailable()
+        return resp_empty(204, set_cookie2)
+
+    try:
+        mongo.events.update_one({"_id": oid}, {"$set": set_doc})
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+
+    try:
+        sessions.refresh(sid, utc_now_rfc3339())
+        set_cookie2 = cookie_refresh(sid, sessions.ttl)
+    except (redis.RedisError, OSError):
+        return redis_unavailable()
+    return resp_empty(204, set_cookie2)
 

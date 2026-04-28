@@ -7,6 +7,7 @@ services:
       dockerfile: lab_1/Dockerfile
     depends_on:
       - redis
+      - mongo
     env_file:
       - .env.local
     ports:
@@ -17,3 +18,13 @@ services:
     ports:
       - "${REDIS_PORT}:${REDIS_PORT}"
 
+  mongo:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+    volumes:
+      - ./mongo-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Internal Mongo port is always 27017; host port can be changed to avoid conflicts.
+      - "${MONGODB_HOST_PORT:-27017}:27017"

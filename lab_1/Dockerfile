@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 WORKDIR /lab_1
 
-RUN pip install --no-cache-dir fastapi uvicorn redis
+RUN pip install --no-cache-dir fastapi uvicorn redis pymongo bcrypt
 
 COPY . /lab_1
 

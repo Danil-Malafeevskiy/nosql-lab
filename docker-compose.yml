@@ -113,6 +113,8 @@ services:
       - mongo-shard2-1
       - mongo-shard2-2
       - mongo-shard2-3
+    env_file:
+      - .env.local
     volumes:
       - ./sharding-init/setup.sh:/setup.sh:ro
     entrypoint: ["/bin/bash", "/setup.sh"]

@@ -26,4 +26,4 @@ services:
     volumes:
       - ./mongo-init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "${MONGODB_HOST_PORT}:${MONGODB_HOST_PORT}"
+      - "${MONGODB_HOST_PORT}:${MONGODB_PORT}"

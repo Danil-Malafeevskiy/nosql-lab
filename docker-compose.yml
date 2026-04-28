@@ -20,10 +20,11 @@ services:
 
   mongo:
     image: mongo:7
+    command: ["mongod", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: example
     volumes:
       - ./mongo-init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "27017:27017"
+      - "${MONGODB_PORT}:${MONGODB_PORT}"

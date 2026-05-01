@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from datetime import datetime, timezone
 
 import redis
+from redis.exceptions import ResponseError
 from cassandra.query import BatchStatement, SimpleStatement
 
 
@@ -76,15 +76,16 @@ class ReactionsService:
 
     def get_reactions_for_title(self, *, title: str, event_ids: list[str]) -> dict:
         key = _cache_key(title)
-        cached = self.r.get(key)
+        try:
+            cached = self.r.hgetall(key)
+        except ResponseError:
+            self.r.delete(key)
+            cached = {}
+
         if cached:
-            try:
-                d = json.loads(cached)
-                likes = int(d.get("likes") or 0)
-                dislikes = int(d.get("dislikes") or 0)
-                return {"likes": likes, "dislikes": dislikes}
-            except Exception:
-                pass
+            likes = int(cached.get("likes") or 0)
+            dislikes = int(cached.get("dislikes") or 0)
+            return {"likes": likes, "dislikes": dislikes}
 
         likes_total = 0
         dislikes_total = 0
@@ -94,6 +95,9 @@ class ReactionsService:
             dislikes_total += d
 
         payload = {"likes": likes_total, "dislikes": dislikes_total}
-        self.r.setex(key, self.cache_ttl, json.dumps(payload, separators=(",", ":")))
+        pipe = self.r.pipeline()
+        pipe.hset(key, mapping={"likes": str(likes_total), "dislikes": str(dislikes_total)})
+        pipe.expire(key, self.cache_ttl)
+        pipe.execute()
         return payload
 

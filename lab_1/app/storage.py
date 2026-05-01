@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import time
 from urllib.parse import quote_plus
 
 import redis
+from cassandra.auth import PlainTextAuthProvider
+from cassandra.cluster import Cluster, Session
+from cassandra.query import SimpleStatement
 from pymongo import MongoClient
 from pymongo.database import Database
 
@@ -42,3 +46,52 @@ def create_mongo(s: Settings) -> Database:
     db.command("ping")
     return db
 
+
+def create_cassandra(s: Settings) -> Session:
+    auth = None
+    if s.cassandra_username or s.cassandra_password:
+        auth = PlainTextAuthProvider(username=s.cassandra_username, password=s.cassandra_password)
+
+    last_exc: Exception | None = None
+    session: Session | None = None
+    for _ in range(30):
+        try:
+            cluster = Cluster(
+                contact_points=s.cassandra_hosts,
+                port=s.cassandra_port,
+                auth_provider=auth,
+            )
+            session = cluster.connect()
+            session.execute(SimpleStatement("SELECT release_version FROM system.local"))
+            last_exc = None
+            break
+        except Exception as e:
+            last_exc = e
+            time.sleep(2)
+    if session is None:
+        raise last_exc or RuntimeError("failed to connect to cassandra")
+
+    ks = s.cassandra_keyspace
+    session.execute(
+        SimpleStatement(
+            "CREATE KEYSPACE IF NOT EXISTS %s "
+            "WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+            % ks
+        )
+    )
+    session.set_keyspace(ks)
+    session.execute(
+        SimpleStatement(
+            """
+            CREATE TABLE IF NOT EXISTS event_reactions (
+                event_id text,
+                like_value tinyint,
+                created_by text,
+                created_at timestamp,
+                PRIMARY KEY ((event_id, like_value), created_by)
+            )
+            """
+        )
+    )
+    session.execute(SimpleStatement("CREATE INDEX IF NOT EXISTS ON event_reactions(created_by)"))
+    return session

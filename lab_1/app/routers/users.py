@@ -8,7 +8,7 @@ import redis
 from fastapi import APIRouter, Depends, Request
 from pymongo.errors import DuplicateKeyError
 
-from ..deps import get_mongo, get_sessions
+from ..deps import get_mongo, get_reactions, get_sessions
 from ..http import cookie_refresh, extract_sid_cookie, resp_empty, resp_json
 from ..routers.common import optional_session_refresh_set_cookie, redis_unavailable
 from ..session_service import SessionService
@@ -164,7 +164,13 @@ def users_get_one(uid: str, request: Request, mongo=Depends(get_mongo), sessions
 
 
 @router.get("/users/{uid}/events")
-def users_events(uid: str, request: Request, mongo=Depends(get_mongo), sessions: SessionService = Depends(get_sessions)):
+def users_events(
+    uid: str,
+    request: Request,
+    mongo=Depends(get_mongo),
+    reactions=Depends(get_reactions),
+    sessions: SessionService = Depends(get_sessions),
+):
     try:
         _sid_seen, set_cookie = optional_session_refresh_set_cookie(request, sessions)
     except (redis.RedisError, OSError):
@@ -183,6 +189,13 @@ def users_events(uid: str, request: Request, mongo=Depends(get_mongo), sessions:
         return resp_json(404, {"message": "User not found"}, set_cookie)
 
     qs = _qs_map(request)
-    return _run_events_list_aggregation(mongo, qs, set_cookie, created_by_fixed=str(oid))
+    return _run_events_list_aggregation(
+        mongo,
+        reactions,
+        qs,
+        set_cookie,
+        created_by_fixed=str(oid),
+        include_reactions=False,
+    )
 
 

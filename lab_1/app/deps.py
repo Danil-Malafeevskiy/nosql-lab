@@ -12,3 +12,15 @@ def get_sessions(request: Request) -> SessionService:
 def get_mongo(request: Request):
     return request.app.state.mongo
 
+
+def get_redis(request: Request):
+    return request.app.state.redis
+
+
+def get_cassandra(request: Request):
+    return request.app.state.cassandra
+
+
+def get_reactions(request: Request):
+    return request.app.state.reactions
+

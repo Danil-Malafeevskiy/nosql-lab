@@ -10,8 +10,8 @@ from bson.objectid import ObjectId
 from fastapi import APIRouter, Depends, Request
 from pymongo.errors import DuplicateKeyError
 
-from ..deps import get_mongo, get_sessions
-from ..http import cookie_refresh, extract_sid_cookie, resp_empty, resp_json
+from ..deps import get_mongo, get_reactions, get_sessions
+from ..http import cookie_clear, cookie_refresh, extract_sid_cookie, resp_empty, resp_json
 from ..routers.common import optional_session_refresh_set_cookie, redis_unavailable
 from ..session_service import SessionService
 from ..constants import EVENT_CATEGORIES, OBJECT_ID_HEX
@@ -66,13 +66,38 @@ def _parse_uint_field(qs: dict[str, list[str]], name: str) -> tuple[int | None, 
     return int(v), True
 
 
-def _run_events_list_aggregation(mongo, qs: dict[str, list[str]], set_cookie: str | None, *, created_by_fixed: str | None):
+def _parse_include_reactions(qs: dict[str, list[str]]) -> tuple[bool, bool]:
+    include, ok = _one_query_value(qs, "include")
+    if not ok:
+        return False, False
+    if include is None or include == "":
+        return False, True
+    if include == "reactions":
+        return True, True
+    return False, False
+
+
+def _run_events_list_aggregation(
+    mongo,
+    reactions,
+    qs: dict[str, list[str]],
+    set_cookie: str | None,
+    *,
+    created_by_fixed: str | None,
+    include_reactions: bool,
+):
     limit, lok = _parse_uint_field(qs, "limit")
     offset, ook = _parse_uint_field(qs, "offset")
     if not lok:
         return resp_json(400, {"message": 'invalid "limit" field'}, set_cookie)
     if not ook:
         return resp_json(400, {"message": 'invalid "offset" field'}, set_cookie)
+
+    if "include" in qs:
+        inc, inc_ok = _parse_include_reactions(qs)
+        if not inc_ok:
+            return resp_json(400, {"message": 'invalid "include" field'}, set_cookie)
+        include_reactions = inc
 
     title_filter, tok = _one_query_value(qs, "title")
     if not tok:
@@ -210,6 +235,20 @@ def _run_events_list_aggregation(mongo, qs: dict[str, list[str]], set_cookie: st
         return resp_json(503, {"message": "database error"}, set_cookie)
 
     events_out = [_event_to_dict(d) for d in docs]
+
+    if include_reactions:
+        titles = sorted({e["title"] for e in events_out if isinstance(e.get("title"), str) and e["title"] != ""})
+        reactions_by_title: dict[str, dict] = {}
+        try:
+            for t in titles:
+                ids = [str(d["_id"]) for d in mongo.events.find({"title": t}, {"_id": 1})]
+                reactions_by_title[t] = reactions.get_reactions_for_title(title=t, event_ids=ids)
+        except Exception:
+            return resp_json(503, {"message": "database error"}, set_cookie)
+
+        for e in events_out:
+            r = reactions_by_title.get(e["title"])
+            e["reactions"] = r if r is not None else {"likes": 0, "dislikes": 0}
     return resp_json(200, {"events": events_out, "count": len(events_out)}, set_cookie)
 
 
@@ -292,17 +331,28 @@ async def events_create(request: Request, mongo=Depends(get_mongo), sessions: Se
 
 
 @router.get("/events")
-def events_list(request: Request, mongo=Depends(get_mongo), sessions: SessionService = Depends(get_sessions)):
+def events_list(
+    request: Request,
+    mongo=Depends(get_mongo),
+    reactions=Depends(get_reactions),
+    sessions: SessionService = Depends(get_sessions),
+):
     try:
         _sid_seen, set_cookie = optional_session_refresh_set_cookie(request, sessions)
     except (redis.RedisError, OSError):
         return redis_unavailable()
     qs = _qs_map(request)
-    return _run_events_list_aggregation(mongo, qs, set_cookie, created_by_fixed=None)
+    return _run_events_list_aggregation(mongo, reactions, qs, set_cookie, created_by_fixed=None, include_reactions=False)
 
 
 @router.get("/events/{eid}")
-def event_get_one(eid: str, request: Request, mongo=Depends(get_mongo), sessions: SessionService = Depends(get_sessions)):
+def event_get_one(
+    eid: str,
+    request: Request,
+    mongo=Depends(get_mongo),
+    reactions=Depends(get_reactions),
+    sessions: SessionService = Depends(get_sessions),
+):
     try:
         _sid_seen, set_cookie = optional_session_refresh_set_cookie(request, sessions)
     except (redis.RedisError, OSError):
@@ -317,7 +367,118 @@ def event_get_one(eid: str, request: Request, mongo=Depends(get_mongo), sessions
         return resp_json(503, {"message": "database error"}, set_cookie)
     if not doc:
         return resp_json(404, {"message": "Not found"}, set_cookie)
-    return resp_json(200, _event_to_dict(doc), set_cookie)
+    out = _event_to_dict(doc)
+    qs = _qs_map(request)
+    include_reactions, ok = _parse_include_reactions(qs)
+    if not ok:
+        return resp_json(400, {"message": 'invalid "include" field'}, set_cookie)
+    if include_reactions:
+        try:
+            ids = [str(d["_id"]) for d in mongo.events.find({"title": out["title"]}, {"_id": 1})]
+            out["reactions"] = reactions.get_reactions_for_title(title=out["title"], event_ids=ids)
+        except Exception:
+            return resp_json(503, {"message": "database error"}, set_cookie)
+    return resp_json(200, out, set_cookie)
+
+
+@router.post("/events/{eid}/like")
+def event_like(
+    eid: str,
+    request: Request,
+    mongo=Depends(get_mongo),
+    reactions=Depends(get_reactions),
+    sessions: SessionService = Depends(get_sessions),
+):
+    _ = request
+    sid = extract_sid_cookie(request)
+    try:
+        _sid_seen, set_cookie = optional_session_refresh_set_cookie(request, sessions)
+    except (redis.RedisError, OSError):
+        return redis_unavailable()
+
+    if not sid or not sessions.exists(sid):
+        return resp_empty(401)
+    uid = sessions.get_user_id(sid)
+    if not uid:
+        return resp_empty(401)
+    try:
+        ObjectId(uid)
+    except Exception:
+        return resp_empty(401)
+
+    try:
+        oid = ObjectId(eid)
+    except Exception:
+        return resp_json(404, {"message": "Event not found"}, set_cookie)
+
+    try:
+        doc = mongo.events.find_one({"_id": oid})
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+    if not doc:
+        return resp_json(404, {"message": "Event not found"}, set_cookie)
+
+    try:
+        reactions.set_like(event_id=str(oid), title=doc["title"], user_id=uid, like_value=1)
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+
+    try:
+        sessions.refresh(sid, utc_now_rfc3339())
+        set_cookie2 = cookie_refresh(sid, sessions.ttl)
+    except (redis.RedisError, OSError):
+        return redis_unavailable()
+    return resp_empty(204, set_cookie2)
+
+
+@router.post("/events/{eid}/dislike")
+def event_dislike(
+    eid: str,
+    request: Request,
+    mongo=Depends(get_mongo),
+    reactions=Depends(get_reactions),
+    sessions: SessionService = Depends(get_sessions),
+):
+    _ = request
+    sid = extract_sid_cookie(request)
+    try:
+        _sid_seen, set_cookie = optional_session_refresh_set_cookie(request, sessions)
+    except (redis.RedisError, OSError):
+        return redis_unavailable()
+
+    if not sid or not sessions.exists(sid):
+        return resp_empty(401, cookie_clear())
+    uid = sessions.get_user_id(sid)
+    if not uid:
+        return resp_empty(401, cookie_clear())
+    try:
+        ObjectId(uid)
+    except Exception:
+        return resp_empty(401, cookie_clear())
+
+    try:
+        oid = ObjectId(eid)
+    except Exception:
+        return resp_json(404, {"message": "Event not found"}, set_cookie)
+
+    try:
+        doc = mongo.events.find_one({"_id": oid})
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+    if not doc:
+        return resp_json(404, {"message": "Event not found"}, set_cookie)
+
+    try:
+        reactions.set_like(event_id=str(oid), title=doc["title"], user_id=uid, like_value=-1)
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+
+    try:
+        sessions.refresh(sid, utc_now_rfc3339())
+        set_cookie2 = cookie_refresh(sid, sessions.ttl)
+    except (redis.RedisError, OSError):
+        return redis_unavailable()
+    return resp_empty(204, set_cookie2)
 
 
 @router.patch("/events/{eid}")

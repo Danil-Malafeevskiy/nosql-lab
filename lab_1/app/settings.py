@@ -34,11 +34,22 @@ class Settings:
         self.app_port = _env_int("APP_PORT")
         self.session_ttl = _env_int("APP_USER_SESSION_TTL")
 
+        self.like_ttl = _env_int("APP_LIKE_TTL")
+
         self.redis_host = _require_env("REDIS_HOST")
         self.redis_port = _env_int("REDIS_PORT")
         # May be empty or unset for passwordless Redis.
         self.redis_password = _env_optional("REDIS_PASSWORD")
         self.redis_db = _env_int("REDIS_DB")
+
+        self.cassandra_hosts = [h.strip() for h in _require_env("CASSANDRA_HOSTS").split(",") if h.strip()]
+        if not self.cassandra_hosts:
+            raise SettingsError("Missing required environment variable: CASSANDRA_HOSTS")
+        self.cassandra_port = _env_int("CASSANDRA_PORT")
+        self.cassandra_username = _env_optional("CASSANDRA_USERNAME")
+        self.cassandra_password = _env_optional("CASSANDRA_PASSWORD")
+        self.cassandra_keyspace = _require_env("CASSANDRA_KEYSPACE", allow_empty=False).strip('"').strip("'")
+        self.cassandra_consistency = _require_env("CASSANDRA_CONSISTENCY")
 
         self.mongodb_database = _require_env("MONGODB_DATABASE")
         self.mongodb_user = _require_env("MONGODB_USER")

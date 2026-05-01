@@ -54,10 +54,10 @@ class ReactionsService:
         other = -1 if like_value == 1 else 1
 
         delete_stmt = self._stmt(
-            "DELETE FROM event_reactions WHERE event_id = ? AND like_value = ? AND created_by = ?"
+            "DELETE FROM event_reactions WHERE event_id = %s AND like_value = %s AND created_by = %s"
         )
         insert_stmt = self._stmt(
-            "INSERT INTO event_reactions (event_id, like_value, created_by, created_at) VALUES (?, ?, ?, ?)"
+            "INSERT INTO event_reactions (event_id, like_value, created_by, created_at) VALUES (%s, %s, %s, %s)"
         )
         batch = BatchStatement()
         batch.add(delete_stmt, (event_id, other, user_id))
@@ -66,7 +66,7 @@ class ReactionsService:
         self._invalidate_title(title)
 
     def _count_for_event_id(self, event_id: str) -> tuple[int, int]:
-        q = "SELECT COUNT(*) AS c FROM event_reactions WHERE event_id = ? AND like_value = ?"
+        q = "SELECT COUNT(*) AS c FROM event_reactions WHERE event_id = %s AND like_value = %s"
         stmt = self._stmt(q)
         likes_row = self.cassandra.execute(stmt, (event_id, 1)).one()
         dislikes_row = self.cassandra.execute(stmt, (event_id, -1)).one()

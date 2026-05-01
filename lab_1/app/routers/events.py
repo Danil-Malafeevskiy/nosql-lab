@@ -424,6 +424,12 @@ def event_like(
         return resp_json(503, {"message": "database error"}, set_cookie)
 
     try:
+        ids = [str(d["_id"]) for d in mongo.events.find({"title": doc["title"]}, {"_id": 1})]
+        reactions.get_reactions_for_title(title=doc["title"], event_ids=ids)
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+
+    try:
         sessions.refresh(sid, utc_now_rfc3339())
         set_cookie2 = cookie_refresh(sid, sessions.ttl)
     except (redis.RedisError, OSError):
@@ -470,6 +476,12 @@ def event_dislike(
 
     try:
         reactions.set_like(event_id=str(oid), title=doc["title"], user_id=uid, like_value=-1)
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+
+    try:
+        ids = [str(d["_id"]) for d in mongo.events.find({"title": doc["title"]}, {"_id": 1})]
+        reactions.get_reactions_for_title(title=doc["title"], event_ids=ids)
     except Exception:
         return resp_json(503, {"message": "database error"}, set_cookie)
 

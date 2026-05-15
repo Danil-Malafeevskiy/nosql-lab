@@ -1,13 +1,13 @@
-version: "3.9"
-
 services:
   api:
     build:
       context: .
       dockerfile: lab_1/Dockerfile
     depends_on:
-      - redis
-      - mongo
+      redis:
+        condition: service_started
+      mongo-setup:
+        condition: service_completed_successfully
     env_file:
       - .env.local
     ports:
@@ -18,13 +18,112 @@ services:
     ports:
       - "${REDIS_PORT}:${REDIS_PORT}"
 
-  mongo:
+  mongo-cfg-1:
     image: mongo:7
-    command: ["mongod", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: example
+    command: ["mongod", "--configsvr", "--replSet", "cfgrepl", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
     volumes:
-      - ./mongo-init:/docker-entrypoint-initdb.d:ro
+      - mongo_cfg_1:/data/configdb
+
+  mongo-cfg-2:
+    image: mongo:7
+    command: ["mongod", "--configsvr", "--replSet", "cfgrepl", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
+    volumes:
+      - mongo_cfg_2:/data/configdb
+
+  mongo-cfg-3:
+    image: mongo:7
+    command: ["mongod", "--configsvr", "--replSet", "cfgrepl", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
+    volumes:
+      - mongo_cfg_3:/data/configdb
+
+  mongo-shard-1:
+    image: mongo:7
+    command: ["mongod", "--shardsvr", "--replSet", "shardrepl", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
+    volumes:
+      - mongo_s1:/data/db
+
+  mongo-shard-2:
+    image: mongo:7
+    command: ["mongod", "--shardsvr", "--replSet", "shardrepl", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
+    volumes:
+      - mongo_s2:/data/db
+
+  mongo-shard-3:
+    image: mongo:7
+    command: ["mongod", "--shardsvr", "--replSet", "shardrepl", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
+    volumes:
+      - mongo_s3:/data/db
+
+  mongo-shard2-1:
+    image: mongo:7
+    command: ["mongod", "--shardsvr", "--replSet", "shardrepl2", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
+    volumes:
+      - mongo_s2b_1:/data/db
+
+  mongo-shard2-2:
+    image: mongo:7
+    command: ["mongod", "--shardsvr", "--replSet", "shardrepl2", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
+    volumes:
+      - mongo_s2b_2:/data/db
+
+  mongo-shard2-3:
+    image: mongo:7
+    command: ["mongod", "--shardsvr", "--replSet", "shardrepl2", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
+    volumes:
+      - mongo_s2b_3:/data/db
+
+  mongos:
+    image: mongo:7
+    command:
+      [
+        "mongos",
+        "--configdb",
+        "cfgrepl/mongo-cfg-1:${MONGODB_PORT},mongo-cfg-2:${MONGODB_PORT},mongo-cfg-3:${MONGODB_PORT}",
+        "--bind_ip_all",
+        "--port",
+        "${MONGODB_PORT}",
+      ]
+    depends_on:
+      - mongo-cfg-1
+      - mongo-cfg-2
+      - mongo-cfg-3
+      - mongo-shard-1
+      - mongo-shard-2
+      - mongo-shard-3
+      - mongo-shard2-1
+      - mongo-shard2-2
+      - mongo-shard2-3
     ports:
       - "${MONGODB_PORT}:${MONGODB_PORT}"
+    restart: unless-stopped
+
+  mongo-setup:
+    image: mongo:7
+    depends_on:
+      - mongos
+      - mongo-cfg-1
+      - mongo-cfg-2
+      - mongo-cfg-3
+      - mongo-shard-1
+      - mongo-shard-2
+      - mongo-shard-3
+      - mongo-shard2-1
+      - mongo-shard2-2
+      - mongo-shard2-3
+    env_file:
+      - .env.local
+    volumes:
+      - ./sharding-init/setup.sh:/setup.sh:ro
+    entrypoint: ["/bin/bash", "/setup.sh"]
+    restart: "no"
+
+volumes:
+  mongo_cfg_1:
+  mongo_cfg_2:
+  mongo_cfg_3:
+  mongo_s1:
+  mongo_s2:
+  mongo_s3:
+  mongo_s2b_1:
+  mongo_s2b_2:
+  mongo_s2b_3:

@@ -19,7 +19,7 @@ try {
 JS
 
 echo "Waiting for config RS..."
-for _ in $(seq 1 60); do
+for _ in $(seq 1 120); do
   if mongosh "mongodb://mongo-cfg-1:${MONGODB_PORT}" --quiet --eval "try{rs.status().ok}catch(e){0}" 2>/dev/null | grep -q true; then
     break
   fi
@@ -42,7 +42,7 @@ try {
 JS
 
 echo "Waiting for shard RS..."
-for _ in $(seq 1 60); do
+for _ in $(seq 1 120); do
   if mongosh "mongodb://mongo-shard-1:${MONGODB_PORT}" --quiet --eval "try{rs.status().ok}catch(e){0}" 2>/dev/null | grep -q true; then
     break
   fi
@@ -65,7 +65,7 @@ try {
 JS
 
 echo "Waiting for shard2 RS..."
-for _ in $(seq 1 60); do
+for _ in $(seq 1 120); do
   if mongosh "mongodb://mongo-shard2-1:${MONGODB_PORT}" --quiet --eval "try{rs.status().ok}catch(e){0}" 2>/dev/null | grep -q true; then
     break
   fi
@@ -73,7 +73,7 @@ for _ in $(seq 1 60); do
 done
 
 echo "Waiting for mongos..."
-for _ in $(seq 1 120); do
+for _ in $(seq 1 240); do
   if mongosh "mongodb://mongos:${MONGODB_PORT}" --quiet --eval "db.runCommand({ping:1}).ok" 2>/dev/null | grep -q 1; then
     break
   fi

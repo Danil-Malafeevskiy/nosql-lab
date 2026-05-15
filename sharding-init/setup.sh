@@ -2,21 +2,7 @@
 set -euo pipefail
 sleep 10
 
-wait_for_mongo() {
-  local host="$1"
-  for _ in $(seq 1 180); do
-    if mongosh "mongodb://${host}:${MONGODB_PORT}" --quiet --eval "db.runCommand({ping:1}).ok" 2>/dev/null | grep -q 1; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
-}
-
-wait_for_mongo "mongo-cfg-1"
-cfg_initiated=0
-for _ in $(seq 1 60); do
-  if mongosh "mongodb://mongo-cfg-1:${MONGODB_PORT}" --quiet <<JS
+mongosh "mongodb://mongo-cfg-1:${MONGODB_PORT}" --quiet <<JS
 try {
   rs.status();
 } catch (e) {
@@ -31,28 +17,16 @@ try {
   });
 }
 JS
-  then
-    cfg_initiated=1
-    break
-  fi
-  sleep 2
-done
-if [ "$cfg_initiated" -ne 1 ]; then
-  exit 1
-fi
 
 echo "Waiting for config RS..."
-for _ in $(seq 1 120); do
-  if mongosh "mongodb://mongo-cfg-1:${MONGODB_PORT}" --quiet --eval "try{rs.status().ok}catch(e){0}" 2>/dev/null | grep -q 1; then
+for _ in $(seq 1 60); do
+  if mongosh "mongodb://mongo-cfg-1:${MONGODB_PORT}" --quiet --eval "try{rs.status().ok}catch(e){0}" 2>/dev/null | grep -q true; then
     break
   fi
   sleep 2
 done
 
-wait_for_mongo "mongo-shard-1"
-shard1_initiated=0
-for _ in $(seq 1 60); do
-  if mongosh "mongodb://mongo-shard-1:${MONGODB_PORT}" --quiet <<JS
+mongosh "mongodb://mongo-shard-1:${MONGODB_PORT}" --quiet <<JS
 try {
   rs.status();
 } catch (e) {
@@ -66,28 +40,16 @@ try {
   });
 }
 JS
-  then
-    shard1_initiated=1
-    break
-  fi
-  sleep 2
-done
-if [ "$shard1_initiated" -ne 1 ]; then
-  exit 1
-fi
 
 echo "Waiting for shard RS..."
-for _ in $(seq 1 120); do
-  if mongosh "mongodb://mongo-shard-1:${MONGODB_PORT}" --quiet --eval "try{rs.status().ok}catch(e){0}" 2>/dev/null | grep -q 1; then
+for _ in $(seq 1 60); do
+  if mongosh "mongodb://mongo-shard-1:${MONGODB_PORT}" --quiet --eval "try{rs.status().ok}catch(e){0}" 2>/dev/null | grep -q true; then
     break
   fi
   sleep 2
 done
 
-wait_for_mongo "mongo-shard2-1"
-shard2_initiated=0
-for _ in $(seq 1 60); do
-  if mongosh "mongodb://mongo-shard2-1:${MONGODB_PORT}" --quiet <<JS
+mongosh "mongodb://mongo-shard2-1:${MONGODB_PORT}" --quiet <<JS
 try {
   rs.status();
 } catch (e) {
@@ -101,26 +63,17 @@ try {
   });
 }
 JS
-  then
-    shard2_initiated=1
-    break
-  fi
-  sleep 2
-done
-if [ "$shard2_initiated" -ne 1 ]; then
-  exit 1
-fi
 
 echo "Waiting for shard2 RS..."
-for _ in $(seq 1 120); do
-  if mongosh "mongodb://mongo-shard2-1:${MONGODB_PORT}" --quiet --eval "try{rs.status().ok}catch(e){0}" 2>/dev/null | grep -q 1; then
+for _ in $(seq 1 60); do
+  if mongosh "mongodb://mongo-shard2-1:${MONGODB_PORT}" --quiet --eval "try{rs.status().ok}catch(e){0}" 2>/dev/null | grep -q true; then
     break
   fi
   sleep 2
 done
 
 echo "Waiting for mongos..."
-for _ in $(seq 1 240); do
+for _ in $(seq 1 120); do
   if mongosh "mongodb://mongos:${MONGODB_PORT}" --quiet --eval "db.runCommand({ping:1}).ok" 2>/dev/null | grep -q 1; then
     break
   fi

@@ -2,6 +2,18 @@
 set -euo pipefail
 sleep 10
 
+wait_for_mongo() {
+  local host="$1"
+  for _ in $(seq 1 60); do
+    if mongosh "mongodb://${host}:${MONGODB_PORT}" --quiet --eval "db.runCommand({ping:1}).ok" 2>/dev/null | grep -q 1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_mongo "mongo-cfg-1"
 mongosh "mongodb://mongo-cfg-1:${MONGODB_PORT}" --quiet <<JS
 try {
   rs.status();
@@ -26,6 +38,7 @@ for _ in $(seq 1 120); do
   sleep 2
 done
 
+wait_for_mongo "mongo-shard-1"
 mongosh "mongodb://mongo-shard-1:${MONGODB_PORT}" --quiet <<JS
 try {
   rs.status();
@@ -49,6 +62,7 @@ for _ in $(seq 1 120); do
   sleep 2
 done
 
+wait_for_mongo "mongo-shard2-1"
 mongosh "mongodb://mongo-shard2-1:${MONGODB_PORT}" --quiet <<JS
 try {
   rs.status();

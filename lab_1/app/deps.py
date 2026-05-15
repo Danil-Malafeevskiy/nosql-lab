@@ -8,3 +8,7 @@ from .session_service import SessionService
 def get_sessions(request: Request) -> SessionService:
     return request.app.state.sessions
 
+
+def get_mongo(request: Request):
+    return request.app.state.mongo
+

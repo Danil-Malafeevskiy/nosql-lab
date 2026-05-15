@@ -15,6 +15,11 @@ def _require_env(name: str, *, allow_empty: bool = False) -> str:
     return v
 
 
+def _env_optional(name: str) -> str:
+    v = os.getenv(name)
+    return (v or "").strip()
+
+
 def _env_int(name: str) -> int:
     raw = _require_env(name)
     try:
@@ -31,8 +36,16 @@ class Settings:
 
         self.redis_host = _require_env("REDIS_HOST")
         self.redis_port = _env_int("REDIS_PORT")
-        self.redis_password = _require_env("REDIS_PASSWORD", allow_empty=True)
+        # May be empty or unset for passwordless Redis.
+        self.redis_password = _env_optional("REDIS_PASSWORD")
         self.redis_db = _env_int("REDIS_DB")
+
+        self.mongodb_database = _require_env("MONGODB_DATABASE")
+        self.mongodb_user = _require_env("MONGODB_USER")
+        self.mongodb_password = _require_env("MONGODB_PASSWORD")
+        self.mongodb_host = _require_env("MONGODB_HOST")
+        self.mongodb_port = _require_env("MONGODB_PORT")
+        self.mongodb_auth_mechanism = _env_optional("MONGODB_AUTH_MECHANISM")
 
 
 _settings: Settings | None = None

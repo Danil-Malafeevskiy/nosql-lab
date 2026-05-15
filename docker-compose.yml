@@ -20,7 +20,7 @@ services:
 
   mongo-cfg-1:
     image: mongo:7
-    command: ["mongod", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
+    command: ["mongod", "--configsvr", "--replSet", "cfgrepl", "--port", "${MONGODB_PORT}", "--bind_ip_all"]
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: example

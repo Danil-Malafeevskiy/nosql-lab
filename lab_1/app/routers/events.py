@@ -456,6 +456,10 @@ def _parse_comment(value, *, required: bool, provided: bool, set_cookie: str | N
     return value, None
 
 
+def _event_ids_by_title(mongo, title: str) -> list[str]:
+    return [str(d["_id"]) for d in mongo.events.find({"title": title}, {"_id": 1})]
+
+
 @router.post("/events/{eid}/reviews")
 async def event_review_create(
     eid: str,
@@ -514,6 +518,11 @@ async def event_review_create(
         return resp_json(503, {"message": "database error"}, set_cookie)
     if rid is None:
         return resp_json(409, {"message": "Already exists"}, set_cookie)
+    try:
+        ids = _event_ids_by_title(mongo, doc["title"])
+        reviews.get_reviews_for_title(title=doc["title"], event_ids=ids)
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
 
     try:
         sessions.refresh(sid, utc_now_rfc3339())
@@ -629,6 +638,11 @@ async def event_review_patch(
         return resp_json(503, {"message": "database error"}, set_cookie)
     if not ok:
         return resp_json(404, {"message": "Event not found"}, set_cookie)
+    try:
+        ids = _event_ids_by_title(mongo, doc["title"])
+        reviews.get_reviews_for_title(title=doc["title"], event_ids=ids)
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
 
     try:
         sessions.refresh(sid, utc_now_rfc3339())

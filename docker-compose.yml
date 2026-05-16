@@ -12,6 +12,8 @@ services:
         condition: service_completed_successfully
     env_file:
       - .env.local
+    environment:
+      APP_EVENT_REVIEWS_TTL: "${APP_EVENT_REVIEWS_TTL}"
     ports:
       - "${APP_PORT}:${APP_PORT}"
 

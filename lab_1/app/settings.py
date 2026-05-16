@@ -35,6 +35,7 @@ class Settings:
         self.session_ttl = _env_int("APP_USER_SESSION_TTL")
 
         self.like_ttl = _env_int("APP_LIKE_TTL")
+        self.event_reviews_ttl = _env_int("APP_EVENT_REVIEWS_TTL")
 
         self.redis_host = _require_env("REDIS_HOST")
         self.redis_port = _env_int("REDIS_PORT")

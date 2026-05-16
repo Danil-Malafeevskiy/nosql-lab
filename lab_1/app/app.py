@@ -12,6 +12,7 @@ from .routers.health import router as health_router
 from .routers.session import router as session_router
 from .routers.users import router as users_router
 from .reactions_service import ReactionsService
+from .reviews_service import ReviewsService
 from .session_service import SessionService
 from .settings import SettingsError, get_settings
 from .storage import create_cassandra, create_mongo, create_redis
@@ -32,6 +33,12 @@ async def lifespan(app: FastAPI):
         c,
         r,
         cache_ttl=s.like_ttl,
+        cassandra_consistency=s.cassandra_consistency,
+    )
+    app.state.reviews = ReviewsService(
+        c,
+        r,
+        cache_ttl=s.event_reviews_ttl,
         cassandra_consistency=s.cassandra_consistency,
     )
     yield

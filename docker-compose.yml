@@ -6,6 +6,8 @@ services:
     depends_on:
       redis:
         condition: service_started
+      cassandra-setup:
+        condition: service_completed_successfully
       mongo-setup:
         condition: service_completed_successfully
     env_file:
@@ -17,6 +19,24 @@ services:
     image: redis:7-alpine
     ports:
       - "${REDIS_PORT}:${REDIS_PORT}"
+
+  cassandra-test:
+    image: cassandra:5
+    ports:
+      - "${CASSANDRA_PORT}:${CASSANDRA_PORT}"
+
+  cassandra-setup:
+    image: cassandra:5
+    depends_on:
+      cassandra-test:
+        condition: service_started
+    env_file:
+      - .env.local
+    volumes:
+      - ./cassandra-init/setup.sh:/setup.sh:ro
+      - ./cassandra-init/init.cql:/init.cql:ro
+    entrypoint: ["/bin/bash", "/setup.sh"]
+    restart: "no"
 
   mongo-cfg-1:
     image: mongo:7

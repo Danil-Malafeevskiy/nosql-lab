@@ -11,9 +11,10 @@ from .routers.events import router as events_router
 from .routers.health import router as health_router
 from .routers.session import router as session_router
 from .routers.users import router as users_router
+from .reactions_service import ReactionsService
 from .session_service import SessionService
 from .settings import SettingsError, get_settings
-from .storage import create_mongo, create_redis
+from .storage import create_cassandra, create_mongo, create_redis
 
 
 @asynccontextmanager
@@ -21,10 +22,18 @@ async def lifespan(app: FastAPI):
     s = get_settings()
     r = create_redis(s)
     m = create_mongo(s)
+    c = create_cassandra(s)
     ensure_mongo_indexes(m)
     app.state.redis = r
     app.state.mongo = m
+    app.state.cassandra = c
     app.state.sessions = SessionService(r, s.session_ttl)
+    app.state.reactions = ReactionsService(
+        c,
+        r,
+        cache_ttl=s.like_ttl,
+        cassandra_consistency=s.cassandra_consistency,
+    )
     yield
 
 

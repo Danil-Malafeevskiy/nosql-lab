@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import time
 from urllib.parse import quote_plus
 
 import redis
+from cassandra.auth import PlainTextAuthProvider
+from cassandra.cluster import Cluster, Session
 from pymongo import MongoClient
 from pymongo.database import Database
 
@@ -42,3 +45,29 @@ def create_mongo(s: Settings) -> Database:
     db.command("ping")
     return db
 
+
+def create_cassandra(s: Settings) -> Session:
+    auth = None
+    if s.cassandra_username or s.cassandra_password:
+        auth = PlainTextAuthProvider(username=s.cassandra_username, password=s.cassandra_password)
+
+    last_exc: Exception | None = None
+    session: Session | None = None
+    for _ in range(30):
+        try:
+            cluster = Cluster(
+                contact_points=s.cassandra_hosts,
+                port=s.cassandra_port,
+                auth_provider=auth,
+            )
+            session = cluster.connect()
+            session.execute("SELECT release_version FROM system.local")
+            session.set_keyspace(s.cassandra_keyspace)
+            last_exc = None
+            break
+        except Exception as e:
+            last_exc = e
+            time.sleep(2)
+    if session is None:
+        raise last_exc or RuntimeError("failed to connect to cassandra")
+    return session

@@ -24,3 +24,7 @@ def get_cassandra(request: Request):
 def get_reactions(request: Request):
     return request.app.state.reactions
 
+
+def get_reviews(request: Request):
+    return request.app.state.reviews
+

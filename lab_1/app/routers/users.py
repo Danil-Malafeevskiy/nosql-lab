@@ -8,7 +8,7 @@ import redis
 from fastapi import APIRouter, Depends, Request
 from pymongo.errors import DuplicateKeyError
 
-from ..deps import get_mongo, get_reactions, get_sessions
+from ..deps import get_mongo, get_reactions, get_reviews, get_sessions
 from ..http import cookie_refresh, extract_sid_cookie, resp_empty, resp_json
 from ..routers.common import optional_session_refresh_set_cookie, redis_unavailable
 from ..session_service import SessionService
@@ -169,6 +169,7 @@ def users_events(
     request: Request,
     mongo=Depends(get_mongo),
     reactions=Depends(get_reactions),
+    reviews=Depends(get_reviews),
     sessions: SessionService = Depends(get_sessions),
 ):
     try:
@@ -192,10 +193,12 @@ def users_events(
     return _run_events_list_aggregation(
         mongo,
         reactions,
+        reviews,
         qs,
         set_cookie,
         created_by_fixed=str(oid),
         include_reactions=False,
+        include_reviews=False,
     )
 
 

@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import timedelta, timezone
-from urllib.parse import urlparse
+from datetime import timedelta
 
 import redis
 from bson.objectid import ObjectId
 from fastapi import APIRouter, Depends, Request
 from pymongo.errors import DuplicateKeyError
 
-from ..deps import get_mongo, get_reactions, get_sessions
+from ..deps import get_mongo, get_reactions, get_reviews, get_sessions
 from ..http import cookie_clear, cookie_refresh, extract_sid_cookie, resp_empty, resp_json
 from ..routers.common import optional_session_refresh_set_cookie, redis_unavailable
 from ..session_service import SessionService
@@ -66,25 +65,33 @@ def _parse_uint_field(qs: dict[str, list[str]], name: str) -> tuple[int | None, 
     return int(v), True
 
 
-def _parse_include_reactions(qs: dict[str, list[str]]) -> tuple[bool, bool]:
+def _parse_include_flags(qs: dict[str, list[str]]) -> tuple[set[str], bool]:
     include, ok = _one_query_value(qs, "include")
     if not ok:
-        return False, False
+        return set(), False
     if include is None or include == "":
-        return False, True
-    if include == "reactions":
-        return True, True
-    return False, False
+        return set(), True
+    flags = set()
+    allowed = {"reactions", "reviews"}
+    parts = include.split(",")
+    for part in parts:
+        name = part.strip()
+        if name == "" or name not in allowed:
+            return set(), False
+        flags.add(name)
+    return flags, True
 
 
 def _run_events_list_aggregation(
     mongo,
     reactions,
+    reviews,
     qs: dict[str, list[str]],
     set_cookie: str | None,
     *,
     created_by_fixed: str | None,
     include_reactions: bool,
+    include_reviews: bool,
 ):
     limit, lok = _parse_uint_field(qs, "limit")
     offset, ook = _parse_uint_field(qs, "offset")
@@ -94,10 +101,11 @@ def _run_events_list_aggregation(
         return resp_json(400, {"message": 'invalid "offset" field'}, set_cookie)
 
     if "include" in qs:
-        inc, inc_ok = _parse_include_reactions(qs)
+        include_flags, inc_ok = _parse_include_flags(qs)
         if not inc_ok:
             return resp_json(400, {"message": 'invalid "include" field'}, set_cookie)
-        include_reactions = inc
+        include_reactions = "reactions" in include_flags
+        include_reviews = "reviews" in include_flags
 
     title_filter, tok = _one_query_value(qs, "title")
     if not tok:
@@ -236,19 +244,34 @@ def _run_events_list_aggregation(
 
     events_out = [_event_to_dict(d) for d in docs]
 
-    if include_reactions:
+    if include_reactions or include_reviews:
         titles = sorted({e["title"] for e in events_out if isinstance(e.get("title"), str) and e["title"] != ""})
-        reactions_by_title: dict[str, dict] = {}
+        ids_by_title: dict[str, list[str]] = {}
         try:
             for t in titles:
-                ids = [str(d["_id"]) for d in mongo.events.find({"title": t}, {"_id": 1})]
-                reactions_by_title[t] = reactions.get_reactions_for_title(title=t, event_ids=ids)
+                ids_by_title[t] = [str(d["_id"]) for d in mongo.events.find({"title": t}, {"_id": 1})]
+        except Exception:
+            return resp_json(503, {"message": "database error"}, set_cookie)
+
+        reactions_by_title: dict[str, dict] = {}
+        reviews_by_title: dict[str, dict] = {}
+        try:
+            if include_reactions:
+                for t in titles:
+                    reactions_by_title[t] = reactions.get_reactions_for_title(title=t, event_ids=ids_by_title[t])
+            if include_reviews:
+                for t in titles:
+                    reviews_by_title[t] = reviews.get_reviews_for_title(title=t, event_ids=ids_by_title[t])
         except Exception:
             return resp_json(503, {"message": "database error"}, set_cookie)
 
         for e in events_out:
-            r = reactions_by_title.get(e["title"])
-            e["reactions"] = r if r is not None else {"likes": 0, "dislikes": 0}
+            if include_reactions:
+                r = reactions_by_title.get(e["title"])
+                e["reactions"] = r if r is not None else {"likes": 0, "dislikes": 0}
+            if include_reviews:
+                rv = reviews_by_title.get(e["title"])
+                e["reviews"] = rv if rv is not None else {"count": 0, "rating": 0.0}
     return resp_json(200, {"events": events_out, "count": len(events_out)}, set_cookie)
 
 
@@ -335,6 +358,7 @@ def events_list(
     request: Request,
     mongo=Depends(get_mongo),
     reactions=Depends(get_reactions),
+    reviews=Depends(get_reviews),
     sessions: SessionService = Depends(get_sessions),
 ):
     try:
@@ -342,7 +366,16 @@ def events_list(
     except (redis.RedisError, OSError):
         return redis_unavailable()
     qs = _qs_map(request)
-    return _run_events_list_aggregation(mongo, reactions, qs, set_cookie, created_by_fixed=None, include_reactions=False)
+    return _run_events_list_aggregation(
+        mongo,
+        reactions,
+        reviews,
+        qs,
+        set_cookie,
+        created_by_fixed=None,
+        include_reactions=False,
+        include_reviews=False,
+    )
 
 
 @router.get("/events/{eid}")
@@ -351,6 +384,7 @@ def event_get_one(
     request: Request,
     mongo=Depends(get_mongo),
     reactions=Depends(get_reactions),
+    reviews=Depends(get_reviews),
     sessions: SessionService = Depends(get_sessions),
 ):
     try:
@@ -369,16 +403,253 @@ def event_get_one(
         return resp_json(404, {"message": "Not found"}, set_cookie)
     out = _event_to_dict(doc)
     qs = _qs_map(request)
-    include_reactions, ok = _parse_include_reactions(qs)
+    include_flags, ok = _parse_include_flags(qs)
     if not ok:
         return resp_json(400, {"message": 'invalid "include" field'}, set_cookie)
-    if include_reactions:
+    include_reactions = "reactions" in include_flags
+    include_reviews = "reviews" in include_flags
+    if include_reactions or include_reviews:
         try:
             ids = [str(d["_id"]) for d in mongo.events.find({"title": out["title"]}, {"_id": 1})]
-            out["reactions"] = reactions.get_reactions_for_title(title=out["title"], event_ids=ids)
+            if include_reactions:
+                out["reactions"] = reactions.get_reactions_for_title(title=out["title"], event_ids=ids)
+            if include_reviews:
+                out["reviews"] = reviews.get_reviews_for_title(title=out["title"], event_ids=ids)
         except Exception:
             return resp_json(503, {"message": "database error"}, set_cookie)
     return resp_json(200, out, set_cookie)
+
+
+def _parse_review_body(raw: bytes, set_cookie: str | None):
+    try:
+        data = json.loads(raw.decode("utf-8")) if raw else None
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, resp_json(400, {"message": 'invalid "body" field'}, set_cookie)
+    if not isinstance(data, dict):
+        return None, resp_json(400, {"message": 'invalid "body" field'}, set_cookie)
+    return data, None
+
+
+def _parse_rating(value, *, required: bool, provided: bool, set_cookie: str | None):
+    if not provided:
+        if required:
+            return None, resp_json(400, {"message": 'invalid "rating" field'}, set_cookie)
+        return None, None
+    if isinstance(value, bool):
+        return None, resp_json(400, {"message": 'invalid "rating" field'}, set_cookie)
+    if not isinstance(value, int):
+        return None, resp_json(400, {"message": 'invalid "rating" field'}, set_cookie)
+    if value < 1 or value > 5:
+        return None, resp_json(400, {"message": 'invalid "rating" field'}, set_cookie)
+    return value, None
+
+
+def _parse_comment(value, *, required: bool, provided: bool, set_cookie: str | None):
+    if not provided:
+        if required:
+            return None, resp_json(400, {"message": 'invalid "comment" field'}, set_cookie)
+        return None, None
+    if not isinstance(value, str):
+        return None, resp_json(400, {"message": 'invalid "comment" field'}, set_cookie)
+    if len(value) > 300:
+        return None, resp_json(400, {"message": 'invalid "comment" field'}, set_cookie)
+    return value, None
+
+
+def _event_ids_by_title(mongo, title: str) -> list[str]:
+    return [str(d["_id"]) for d in mongo.events.find({"title": title}, {"_id": 1})]
+
+
+@router.post("/events/{eid}/reviews")
+async def event_review_create(
+    eid: str,
+    request: Request,
+    mongo=Depends(get_mongo),
+    reviews=Depends(get_reviews),
+    sessions: SessionService = Depends(get_sessions),
+):
+    raw = await request.body()
+    sid = extract_sid_cookie(request)
+    try:
+        _sid_seen, set_cookie = optional_session_refresh_set_cookie(request, sessions)
+    except (redis.RedisError, OSError):
+        return redis_unavailable()
+
+    if not sid or not sessions.exists(sid):
+        return resp_empty(401)
+    uid = sessions.get_user_id(sid)
+    if not uid:
+        return resp_empty(401)
+    try:
+        ObjectId(uid)
+    except Exception:
+        return resp_empty(401)
+
+    try:
+        oid = ObjectId(eid)
+    except Exception:
+        return resp_json(404, {"message": "Event not found"}, set_cookie)
+
+    data, err_resp = _parse_review_body(raw, set_cookie)
+    if err_resp is not None:
+        return err_resp
+
+    rating, err_resp = _parse_rating(
+        data.get("rating"), required=True, provided="rating" in data, set_cookie=set_cookie
+    )
+    if err_resp is not None:
+        return err_resp
+    comment, err_resp = _parse_comment(
+        data.get("comment"), required=True, provided="comment" in data, set_cookie=set_cookie
+    )
+    if err_resp is not None:
+        return err_resp
+
+    try:
+        doc = mongo.events.find_one({"_id": oid})
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+    if not doc:
+        return resp_json(404, {"message": "Event not found"}, set_cookie)
+
+    try:
+        rid = reviews.create_review(event_id=str(oid), title=doc["title"], created_by=uid, comment=comment, rating=rating)
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+    if rid is None:
+        return resp_json(409, {"message": "Already exists"}, set_cookie)
+    try:
+        ids = _event_ids_by_title(mongo, doc["title"])
+        reviews.get_reviews_for_title(title=doc["title"], event_ids=ids)
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+
+    try:
+        sessions.refresh(sid, utc_now_rfc3339())
+        set_cookie2 = cookie_refresh(sid, sessions.ttl)
+    except (redis.RedisError, OSError):
+        return redis_unavailable()
+    return resp_json(201, {"id": str(rid)}, set_cookie2)
+
+
+@router.get("/events/{eid}/reviews")
+def event_reviews_list(
+    eid: str,
+    request: Request,
+    mongo=Depends(get_mongo),
+    reviews=Depends(get_reviews),
+    sessions: SessionService = Depends(get_sessions),
+):
+    try:
+        _sid_seen, set_cookie = optional_session_refresh_set_cookie(request, sessions)
+    except (redis.RedisError, OSError):
+        return redis_unavailable()
+
+    qs = _qs_map(request)
+    limit, lok = _parse_uint_field(qs, "limit")
+    offset, ook = _parse_uint_field(qs, "offset")
+    if not lok:
+        return resp_json(400, {"message": 'invalid "limit" field'}, set_cookie)
+    if not ook:
+        return resp_json(400, {"message": 'invalid "offset" field'}, set_cookie)
+
+    try:
+        oid = ObjectId(eid)
+    except Exception:
+        return resp_json(404, {"message": "Event not found"}, set_cookie)
+    try:
+        doc = mongo.events.find_one({"_id": oid}, {"_id": 1})
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+    if not doc:
+        return resp_json(404, {"message": "Event not found"}, set_cookie)
+
+    try:
+        result = reviews.list_reviews(event_id=str(oid), limit=limit, offset=offset or 0)
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+    return resp_json(200, {"reviews": result, "count": len(result)}, set_cookie)
+
+
+@router.patch("/events/{eid}/reviews/{rid}")
+async def event_review_patch(
+    eid: str,
+    rid: str,
+    request: Request,
+    mongo=Depends(get_mongo),
+    reviews=Depends(get_reviews),
+    sessions: SessionService = Depends(get_sessions),
+):
+    raw = await request.body()
+    sid = extract_sid_cookie(request)
+    try:
+        _sid_seen, set_cookie = optional_session_refresh_set_cookie(request, sessions)
+    except (redis.RedisError, OSError):
+        return redis_unavailable()
+
+    if not sid or not sessions.exists(sid):
+        return resp_empty(401)
+    uid = sessions.get_user_id(sid)
+    if not uid:
+        return resp_empty(401)
+    try:
+        ObjectId(uid)
+    except Exception:
+        return resp_empty(401)
+
+    data, err_resp = _parse_review_body(raw, set_cookie)
+    if err_resp is not None:
+        return err_resp
+
+    rating, err_resp = _parse_rating(
+        data.get("rating"), required=False, provided="rating" in data, set_cookie=set_cookie
+    )
+    if err_resp is not None:
+        return err_resp
+    comment, err_resp = _parse_comment(
+        data.get("comment"), required=False, provided="comment" in data, set_cookie=set_cookie
+    )
+    if err_resp is not None:
+        return err_resp
+    if "rating" not in data and "comment" not in data:
+        return resp_json(400, {"message": 'invalid "body" field'}, set_cookie)
+
+    try:
+        oid = ObjectId(eid)
+    except Exception:
+        return resp_json(404, {"message": "Event not found"}, set_cookie)
+    try:
+        doc = mongo.events.find_one({"_id": oid}, {"title": 1})
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+    if not doc:
+        return resp_json(404, {"message": "Event not found"}, set_cookie)
+
+    try:
+        ok = reviews.update_review(
+            event_id=str(oid),
+            title=doc["title"],
+            created_by=uid,
+            review_id=rid,
+            rating=rating,
+            comment=comment,
+        )
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+    if not ok:
+        return resp_json(404, {"message": "Event not found"}, set_cookie)
+    try:
+        ids = _event_ids_by_title(mongo, doc["title"])
+        reviews.get_reviews_for_title(title=doc["title"], event_ids=ids)
+    except Exception:
+        return resp_json(503, {"message": "database error"}, set_cookie)
+
+    try:
+        sessions.refresh(sid, utc_now_rfc3339())
+        set_cookie2 = cookie_refresh(sid, sessions.ttl)
+    except (redis.RedisError, OSError):
+        return redis_unavailable()
+    return resp_empty(204, set_cookie2)
 
 
 @router.post("/events/{eid}/like")

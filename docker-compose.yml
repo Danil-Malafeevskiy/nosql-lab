@@ -6,6 +6,8 @@ services:
     depends_on:
       redis:
         condition: service_started
+      neo4j:
+        condition: service_started
       cassandra-setup:
         condition: service_completed_successfully
       mongo-setup:
@@ -19,6 +21,17 @@ services:
     image: redis:7-alpine
     ports:
       - "${REDIS_PORT}:${REDIS_PORT}"
+
+  neo4j:
+    image: neo4j:5
+    env_file:
+      - .env.local
+    environment:
+      - NEO4J_AUTH=${NEO4J_USERNAME}/${NEO4J_PASSWORD}
+      - NEO4J_server_bolt_listen__address=0.0.0.0:${NEO4J_BOLT_PORT}
+      - NEO4J_server_bolt_advertised__address=neo4j:${NEO4J_BOLT_PORT}
+    ports:
+      - "${NEO4J_BOLT_PORT}:${NEO4J_BOLT_PORT}"
 
   cassandra-test:
     image: cassandra:5

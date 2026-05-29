@@ -46,6 +46,21 @@ def _load_events_by_ids(mongo, event_ids: list[str]) -> list[dict]:
     return [by_id[event_id] for event_id in event_ids if event_id in by_id]
 
 
+def _dedupe_by_title(docs: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    seen_titles: set[str] = set()
+    for doc in docs:
+        title = doc.get("title")
+        if not isinstance(title, str):
+            out.append(doc)
+            continue
+        if title in seen_titles:
+            continue
+        seen_titles.add(title)
+        out.append(doc)
+    return out
+
+
 @router.get("/recommendations")
 def recommendations_get(
     request: Request,
@@ -78,7 +93,7 @@ def recommendations_get(
 
     try:
         recommended_ids = recommendations.get_recommended_event_ids(user_id)
-        docs = _load_events_by_ids(mongo, recommended_ids)
+        docs = _dedupe_by_title(_load_events_by_ids(mongo, recommended_ids))
         events = [_event_to_dict(doc) for doc in docs]
     except (redis.RedisError, OSError):
         return redis_unavailable()

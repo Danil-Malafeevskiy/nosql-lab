@@ -28,8 +28,6 @@ services:
       - .env.local
     environment:
       - NEO4J_AUTH=${NEO4J_USERNAME}/${NEO4J_PASSWORD}
-      - NEO4J_server_bolt_listen__address=0.0.0.0:${NEO4J_BOLT_PORT}
-      - NEO4J_server_bolt_advertised__address=neo4j:${NEO4J_BOLT_PORT}
     ports:
       - "${NEO4J_BOLT_PORT}:${NEO4J_BOLT_PORT}"
 

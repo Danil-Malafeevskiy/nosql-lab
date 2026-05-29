@@ -28,3 +28,7 @@ def get_reactions(request: Request):
 def get_reviews(request: Request):
     return request.app.state.reviews
 
+
+def get_recommendations(request: Request):
+    return request.app.state.recommendations
+

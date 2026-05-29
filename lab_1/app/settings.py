@@ -36,6 +36,7 @@ class Settings:
 
         self.like_ttl = _env_int("APP_LIKE_TTL")
         self.event_reviews_ttl = _env_int("APP_EVENT_REVIEWS_TTL")
+        self.recommendations_ttl = _env_int("APP_RECOMMENDATIONS_TTL")
 
         self.redis_host = _require_env("REDIS_HOST")
         self.redis_port = _env_int("REDIS_PORT")
@@ -58,6 +59,10 @@ class Settings:
         self.mongodb_host = _require_env("MONGODB_HOST")
         self.mongodb_port = _require_env("MONGODB_PORT")
         self.mongodb_auth_mechanism = _env_optional("MONGODB_AUTH_MECHANISM")
+
+        self.neo4j_url = _require_env("NEO4J_URL")
+        self.neo4j_username = _require_env("NEO4J_USERNAME")
+        self.neo4j_password = _require_env("NEO4J_PASSWORD")
 
 
 _settings: Settings | None = None

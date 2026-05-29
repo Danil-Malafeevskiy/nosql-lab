@@ -6,6 +6,7 @@ from urllib.parse import quote_plus
 import redis
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import Cluster, Session
+from neo4j import Driver, GraphDatabase
 from pymongo import MongoClient
 from pymongo.database import Database
 
@@ -71,3 +72,23 @@ def create_cassandra(s: Settings) -> Session:
     if session is None:
         raise last_exc or RuntimeError("failed to connect to cassandra")
     return session
+
+
+def create_neo4j(s: Settings) -> Driver:
+    last_exc: Exception | None = None
+    driver: Driver | None = None
+    for _ in range(30):
+        try:
+            driver = GraphDatabase.driver(
+                s.neo4j_url,
+                auth=(s.neo4j_username, s.neo4j_password),
+            )
+            driver.verify_connectivity()
+            last_exc = None
+            break
+        except Exception as e:
+            last_exc = e
+            time.sleep(2)
+    if driver is None:
+        raise last_exc or RuntimeError("failed to connect to neo4j")
+    return driver

@@ -9,7 +9,7 @@ from bson.objectid import ObjectId
 from fastapi import APIRouter, Depends, Request
 from pymongo.errors import DuplicateKeyError
 
-from ..deps import get_mongo, get_reactions, get_reviews, get_sessions
+from ..deps import get_mongo, get_reactions, get_recommendations, get_reviews, get_sessions
 from ..http import cookie_clear, cookie_refresh, extract_sid_cookie, resp_empty, resp_json
 from ..routers.common import optional_session_refresh_set_cookie, redis_unavailable
 from ..session_service import SessionService
@@ -658,6 +658,7 @@ def event_like(
     request: Request,
     mongo=Depends(get_mongo),
     reactions=Depends(get_reactions),
+    recommendations=Depends(get_recommendations),
     sessions: SessionService = Depends(get_sessions),
 ):
     _ = request
@@ -691,6 +692,7 @@ def event_like(
 
     try:
         reactions.set_like(event_id=str(oid), title=doc["title"], user_id=uid, like_value=1)
+        recommendations.add_liked_event(user_id=uid, event_id=str(oid), title=doc["title"])
     except Exception:
         return resp_json(503, {"message": "database error"}, set_cookie)
 

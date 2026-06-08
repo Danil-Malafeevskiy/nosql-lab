@@ -218,3 +218,4 @@ curl -i -X POST http://localhost:8080/events \
 Рекомендация перед PR:
 - локально поднять стенд `make run`
 - выполнить smoke-проверку ключевых endpoint'ов через Swagger UI (`/docs`) или `curl`.
+

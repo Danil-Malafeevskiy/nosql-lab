@@ -21,7 +21,28 @@ from .events import _run_events_list_aggregation, _qs_map
 router = APIRouter()
 
 
-@router.post("/users")
+@router.post(
+    "/users",
+    summary="Регистрация пользователя",
+    description="Введите `full_name`, `username`, `password`. При успехе вернется 201 и `Set-Cookie` с новой сессией.",
+    responses={
+        201: {"description": "Пользователь создан"}
+    },
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "example": {
+                        "full_name": "Ivan Petrov",
+                        "username": "ivan.petrov",
+                        "password": "qwerty123",
+                    }
+                }
+            },
+        }
+    },
+)
 async def users_post(request: Request, mongo=Depends(get_mongo), sessions: SessionService = Depends(get_sessions)):
     raw = await request.body()
 
@@ -73,7 +94,51 @@ async def users_post(request: Request, mongo=Depends(get_mongo), sessions: Sessi
     return resp_empty(201, cookie_refresh(new_sid, sessions.ttl))
 
 
-@router.get("/users")
+@router.get(
+    "/users",
+    summary="Список пользователей",
+    description="Можно передать фильтры `limit`, `offset`, `name`, `id`. Cookie не обязательна, но если есть, будет продлена.",
+    responses={
+        200: {
+            "description": "Users list",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "users": [
+                            {
+                                "id": "665f2f1d6f43a6a6f843cb11",
+                                "full_name": "Ivan Petrov",
+                                "username": "ivan.petrov",
+                            }
+                        ],
+                        "count": 1,
+                    }
+                }
+            },
+        }
+    },
+    openapi_extra={
+        "parameters": [
+            {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer"}, "example": 10},
+            {"name": "offset", "in": "query", "required": False, "schema": {"type": "integer"}, "example": 0},
+            {"name": "name", "in": "query", "required": False, "schema": {"type": "string"}, "example": "Ivan"},
+            {
+                "name": "id",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string"},
+                "example": "665f2f1d6f43a6a6f843cb11",
+            },
+            {
+                "name": "Cookie",
+                "in": "header",
+                "required": False,
+                "schema": {"type": "string"},
+                "example": "X-Session-Id=3f2b5d9f1d08440fa7a53fdff66fd4f9",
+            },
+        ]
+    },
+)
 def users_list(request: Request, mongo=Depends(get_mongo), sessions: SessionService = Depends(get_sessions)):
     try:
         _sid_seen, set_cookie = optional_session_refresh_set_cookie(request, sessions)
@@ -141,7 +206,25 @@ def users_list(request: Request, mongo=Depends(get_mongo), sessions: SessionServ
     return resp_json(200, {"users": out, "count": len(out)}, set_cookie)
 
 
-@router.get("/users/{uid}")
+@router.get(
+    "/users/{uid}",
+    summary="Получить пользователя по id",
+    description="Укажите `uid` в path, например `665f2f1d6f43a6a6f843cb11`.",
+    responses={
+        200: {
+            "description": "User details",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": "665f2f1d6f43a6a6f843cb11",
+                        "full_name": "Ivan Petrov",
+                        "username": "ivan.petrov",
+                    }
+                }
+            },
+        }
+    },
+)
 def users_get_one(uid: str, request: Request, mongo=Depends(get_mongo), sessions: SessionService = Depends(get_sessions)):
     try:
         _sid_seen, set_cookie = optional_session_refresh_set_cookie(request, sessions)
@@ -163,7 +246,30 @@ def users_get_one(uid: str, request: Request, mongo=Depends(get_mongo), sessions
     return resp_json(200, {"id": str(u["_id"]), "full_name": u["full_name"], "username": u["username"]}, set_cookie)
 
 
-@router.get("/users/{uid}/events")
+@router.get(
+    "/users/{uid}/events",
+    summary="События пользователя",
+    description="Укажите `uid` в path. Можно использовать те же query-фильтры, что и в `/events`.",
+    responses={
+        200: {
+            "description": "Events created by user",
+            "content": {"application/json": {"example": {"events": [], "count": 0}}},
+        }
+    },
+    openapi_extra={
+        "parameters": [
+            {
+                "name": "include",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string"},
+                "example": "reactions,reviews",
+            },
+            {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer"}, "example": 10},
+            {"name": "offset", "in": "query", "required": False, "schema": {"type": "integer"}, "example": 0},
+        ]
+    },
+)
 def users_events(
     uid: str,
     request: Request,

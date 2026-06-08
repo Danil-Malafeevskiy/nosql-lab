@@ -61,7 +61,47 @@ def _dedupe_by_title(docs: list[dict]) -> list[dict]:
     return out
 
 
-@router.get("/recommendations")
+@router.get(
+    "/recommendations",
+    summary="Получить персональные рекомендации",
+    description="Передайте cookie `X-Session-Id` авторизованного пользователя. В ответе — рекомендованные события.",
+    responses={
+        200: {
+            "description": "Personalized recommendations",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "events": [
+                            {
+                                "id": "665f30186f43a6a6f843cb12",
+                                "title": "Python Meetup #42",
+                                "category": "meetup",
+                                "price": 500,
+                                "description": "Backend engineers meetup",
+                                "location": {"address": "Nevsky 1", "city": "Saint Petersburg"},
+                                "created_at": "2026-06-08T15:35:00Z",
+                                "created_by": "665f2f1d6f43a6a6f843cb11",
+                                "started_at": "2026-06-15T18:00:00Z",
+                                "finished_at": "2026-06-15T21:00:00Z",
+                            }
+                        ]
+                    }
+                }
+            },
+        }
+    },
+    openapi_extra={
+        "parameters": [
+            {
+                "name": "Cookie",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string"},
+                "example": "X-Session-Id=3f2b5d9f1d08440fa7a53fdff66fd4f9",
+            }
+        ]
+    },
+)
 def recommendations_get(
     request: Request,
     mongo=Depends(get_mongo),

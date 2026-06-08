@@ -12,7 +12,27 @@ from ..utils import utc_now_rfc3339
 router = APIRouter()
 
 
-@router.post("/session")
+@router.post(
+    "/session",
+    summary="Создать/обновить анонимную сессию",
+    description="Можно вызвать без cookie. Если cookie `X-Session-Id` уже есть, сессия будет продлена; иначе создана новая.",
+    responses={
+        201: {"description": "Новая сессия создана (`Set-Cookie`)"},
+        200: {"description": "Текущая сессия продлена (`Set-Cookie`)"},
+    },
+    openapi_extra={
+        "parameters": [
+            {
+                "name": "Cookie",
+                "in": "header",
+                "required": False,
+                "schema": {"type": "string"},
+                "example": "X-Session-Id=3f2b5d9f1d08440fa7a53fdff66fd4f9",
+                "description": "Опциональная cookie текущей сессии",
+            }
+        ]
+    },
+)
 def session_post(request: Request, sessions: SessionService = Depends(get_sessions)):
     now = utc_now_rfc3339()
     sid = extract_sid_cookie(request)

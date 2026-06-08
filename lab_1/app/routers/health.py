@@ -7,7 +7,17 @@ from ..settings import get_settings
 router = APIRouter()
 
 
-@router.get("/health")
+@router.get(
+    "/health",
+    summary="Проверка доступности сервиса",
+    description="Сервисный endpoint для проверки, что API запущен и отвечает.",
+    responses={
+        200: {
+            "description": "Service is healthy",
+            "content": {"application/json": {"example": {"status": "ok"}}},
+        }
+    },
+)
 def health(request: Request) -> JSONResponse:
     s = get_settings()
     sid = extract_sid_cookie(request)

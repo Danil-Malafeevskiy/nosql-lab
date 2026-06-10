@@ -16,7 +16,24 @@ from ..utils import utc_now_rfc3339
 router = APIRouter()
 
 
-@router.post("/auth/login")
+@router.post(
+    "/auth/login",
+    summary="Логин пользователя",
+    description="Введите `username` и `password` в body. При успехе возвращается 204 и `Set-Cookie` с `X-Session-Id`.",
+    responses={
+        204: {"description": "Успешный логин (сессия создана/обновлена)"}
+    },
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "example": {"username": "ivan.petrov", "password": "qwerty123"}
+                }
+            },
+        }
+    },
+)
 async def auth_login(request: Request, mongo=Depends(get_mongo), sessions: SessionService = Depends(get_sessions)):
     raw = await request.body()
     sid = extract_sid_cookie(request)
@@ -65,7 +82,26 @@ async def auth_login(request: Request, mongo=Depends(get_mongo), sessions: Sessi
     return resp_empty(204, cookie_refresh(out_sid, sessions.ttl))
 
 
-@router.post("/auth/logout")
+@router.post(
+    "/auth/logout",
+    summary="Логаут пользователя",
+    description="Передайте cookie `X-Session-Id`. При успехе вернется 204 и cookie будет очищена.",
+    responses={
+        204: {"description": "Успешный логаут"}
+    },
+    openapi_extra={
+        "parameters": [
+            {
+                "name": "Cookie",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string"},
+                "example": "X-Session-Id=3f2b5d9f1d08440fa7a53fdff66fd4f9",
+                "description": "Cookie с идентификатором сессии",
+            }
+        ]
+    },
+)
 async def auth_logout(request: Request, sessions: SessionService = Depends(get_sessions)):
     _ = await request.body()
     sid = extract_sid_cookie(request)

@@ -275,7 +275,42 @@ def _run_events_list_aggregation(
     return resp_json(200, {"events": events_out, "count": len(events_out)}, set_cookie)
 
 
-@router.post("/events")
+@router.post(
+    "/events",
+    summary="Создать событие",
+    description="Передайте body по примеру и cookie `X-Session-Id` авторизованного пользователя.",
+    responses={
+        201: {
+            "description": "Event created",
+            "content": {"application/json": {"example": {"id": "665f30186f43a6a6f843cb12"}}},
+        }
+    },
+    openapi_extra={
+        "parameters": [
+            {
+                "name": "Cookie",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string"},
+                "example": "X-Session-Id=3f2b5d9f1d08440fa7a53fdff66fd4f9",
+            }
+        ],
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "example": {
+                        "title": "Python Meetup #42",
+                        "address": "Nevsky 1",
+                        "description": "Backend engineers meetup",
+                        "started_at": "2026-06-15T18:00:00Z",
+                        "finished_at": "2026-06-15T21:00:00Z",
+                    }
+                }
+            },
+        }
+    },
+)
 async def events_create(request: Request, mongo=Depends(get_mongo), sessions: SessionService = Depends(get_sessions)):
     raw = await request.body()
     sid = extract_sid_cookie(request)
@@ -353,7 +388,51 @@ async def events_create(request: Request, mongo=Depends(get_mongo), sessions: Se
     return resp_json(201, {"id": str(ins.inserted_id)}, set_cookie2)
 
 
-@router.get("/events")
+@router.get(
+    "/events",
+    summary="Список событий",
+    description="Поиск и фильтрация событий. Для обогащения ответа используйте `include=reactions,reviews`.",
+    responses={
+        200: {
+            "description": "Events list",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "events": [
+                            {
+                                "id": "665f30186f43a6a6f843cb12",
+                                "title": "Python Meetup #42",
+                                "category": "meetup",
+                                "price": 500,
+                                "description": "Backend engineers meetup",
+                                "location": {"address": "Nevsky 1", "city": "Saint Petersburg"},
+                                "created_at": "2026-06-08T15:35:00Z",
+                                "created_by": "665f2f1d6f43a6a6f843cb11",
+                                "started_at": "2026-06-15T18:00:00Z",
+                                "finished_at": "2026-06-15T21:00:00Z",
+                            }
+                        ],
+                        "count": 1,
+                    }
+                }
+            },
+        }
+    },
+    openapi_extra={
+        "parameters": [
+            {"name": "include", "in": "query", "required": False, "schema": {"type": "string"}, "example": "reactions,reviews"},
+            {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer"}, "example": 10},
+            {"name": "offset", "in": "query", "required": False, "schema": {"type": "integer"}, "example": 0},
+            {"name": "category", "in": "query", "required": False, "schema": {"type": "string"}, "example": "meetup"},
+            {"name": "city", "in": "query", "required": False, "schema": {"type": "string"}, "example": "Saint Petersburg"},
+            {"name": "price_from", "in": "query", "required": False, "schema": {"type": "integer"}, "example": 0},
+            {"name": "price_to", "in": "query", "required": False, "schema": {"type": "integer"}, "example": 1000},
+            {"name": "date_from", "in": "query", "required": False, "schema": {"type": "string"}, "example": "2026-06-01"},
+            {"name": "date_to", "in": "query", "required": False, "schema": {"type": "string"}, "example": "2026-06-30"},
+            {"name": "user", "in": "query", "required": False, "schema": {"type": "string"}, "example": "ivan.petrov"},
+        ]
+    },
+)
 def events_list(
     request: Request,
     mongo=Depends(get_mongo),
@@ -378,7 +457,39 @@ def events_list(
     )
 
 
-@router.get("/events/{eid}")
+@router.get(
+    "/events/{eid}",
+    summary="Получить событие по id",
+    description="Укажите `eid` в path и при необходимости `include=reactions,reviews`.",
+    responses={
+        200: {
+            "description": "Event details",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": "665f30186f43a6a6f843cb12",
+                        "title": "Python Meetup #42",
+                        "category": "meetup",
+                        "price": 500,
+                        "description": "Backend engineers meetup",
+                        "location": {"address": "Nevsky 1", "city": "Saint Petersburg"},
+                        "created_at": "2026-06-08T15:35:00Z",
+                        "created_by": "665f2f1d6f43a6a6f843cb11",
+                        "started_at": "2026-06-15T18:00:00Z",
+                        "finished_at": "2026-06-15T21:00:00Z",
+                        "reactions": {"likes": 10, "dislikes": 2},
+                        "reviews": {"count": 3, "rating": 4.7},
+                    }
+                }
+            },
+        }
+    },
+    openapi_extra={
+        "parameters": [
+            {"name": "include", "in": "query", "required": False, "schema": {"type": "string"}, "example": "reactions,reviews"}
+        ]
+    },
+)
 def event_get_one(
     eid: str,
     request: Request,
@@ -460,7 +571,36 @@ def _event_ids_by_title(mongo, title: str) -> list[str]:
     return [str(d["_id"]) for d in mongo.events.find({"title": title}, {"_id": 1})]
 
 
-@router.post("/events/{eid}/reviews")
+@router.post(
+    "/events/{eid}/reviews",
+    summary="Создать отзыв к событию",
+    description="Укажите `eid`, передайте `rating` и `comment`, а также cookie `X-Session-Id`.",
+    responses={
+        201: {
+            "description": "Review created",
+            "content": {"application/json": {"example": {"id": "52ad8e8d-fde9-4b7a-b067-b53a4de668f2"}}},
+        }
+    },
+    openapi_extra={
+        "parameters": [
+            {
+                "name": "Cookie",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string"},
+                "example": "X-Session-Id=3f2b5d9f1d08440fa7a53fdff66fd4f9",
+            }
+        ],
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "example": {"rating": 5, "comment": "Great event, practical content."}
+                }
+            },
+        }
+    },
+)
 async def event_review_create(
     eid: str,
     request: Request,
@@ -532,7 +672,40 @@ async def event_review_create(
     return resp_json(201, {"id": str(rid)}, set_cookie2)
 
 
-@router.get("/events/{eid}/reviews")
+@router.get(
+    "/events/{eid}/reviews",
+    summary="Получить отзывы события",
+    description="Укажите `eid`, при необходимости используйте пагинацию `limit` и `offset`.",
+    responses={
+        200: {
+            "description": "Event reviews list",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "reviews": [
+                            {
+                                "id": "52ad8e8d-fde9-4b7a-b067-b53a4de668f2",
+                                "event_id": "665f30186f43a6a6f843cb12",
+                                "comment": "Great event, practical content.",
+                                "created_at": "2026-06-08T15:40:00Z",
+                                "created_by": "665f2f1d6f43a6a6f843cb11",
+                                "rating": 5,
+                                "updated_at": "2026-06-08T15:40:00Z",
+                            }
+                        ],
+                        "count": 1,
+                    }
+                }
+            },
+        }
+    },
+    openapi_extra={
+        "parameters": [
+            {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer"}, "example": 20},
+            {"name": "offset", "in": "query", "required": False, "schema": {"type": "integer"}, "example": 0},
+        ]
+    },
+)
 def event_reviews_list(
     eid: str,
     request: Request,
@@ -571,7 +744,33 @@ def event_reviews_list(
     return resp_json(200, {"reviews": result, "count": len(result)}, set_cookie)
 
 
-@router.patch("/events/{eid}/reviews/{rid}")
+@router.patch(
+    "/events/{eid}/reviews/{rid}",
+    summary="Обновить свой отзыв",
+    description="Укажите `eid`, `rid`, передайте хотя бы одно из полей: `rating` или `comment`.",
+    responses={
+        204: {"description": "Отзыв обновлен"}
+    },
+    openapi_extra={
+        "parameters": [
+            {
+                "name": "Cookie",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string"},
+                "example": "X-Session-Id=3f2b5d9f1d08440fa7a53fdff66fd4f9",
+            }
+        ],
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "example": {"rating": 4, "comment": "Good event, but too short Q&A"}
+                }
+            },
+        }
+    },
+)
 async def event_review_patch(
     eid: str,
     rid: str,
@@ -652,7 +851,25 @@ async def event_review_patch(
     return resp_empty(204, set_cookie2)
 
 
-@router.post("/events/{eid}/like")
+@router.post(
+    "/events/{eid}/like",
+    summary="Поставить лайк событию",
+    description="Укажите `eid` и передайте cookie `X-Session-Id` авторизованного пользователя.",
+    responses={
+        204: {"description": "Лайк установлен"}
+    },
+    openapi_extra={
+        "parameters": [
+            {
+                "name": "Cookie",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string"},
+                "example": "X-Session-Id=3f2b5d9f1d08440fa7a53fdff66fd4f9",
+            }
+        ]
+    },
+)
 def event_like(
     eid: str,
     request: Request,
@@ -710,7 +927,25 @@ def event_like(
     return resp_empty(204, set_cookie2)
 
 
-@router.post("/events/{eid}/dislike")
+@router.post(
+    "/events/{eid}/dislike",
+    summary="Поставить дизлайк событию",
+    description="Укажите `eid` и передайте cookie `X-Session-Id` авторизованного пользователя.",
+    responses={
+        204: {"description": "Дизлайк установлен"}
+    },
+    openapi_extra={
+        "parameters": [
+            {
+                "name": "Cookie",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string"},
+                "example": "X-Session-Id=3f2b5d9f1d08440fa7a53fdff66fd4f9",
+            }
+        ]
+    },
+)
 def event_dislike(
     eid: str,
     request: Request,
@@ -766,7 +1001,33 @@ def event_dislike(
     return resp_empty(204, set_cookie2)
 
 
-@router.patch("/events/{eid}")
+@router.patch(
+    "/events/{eid}",
+    summary="Обновить событие организатора",
+    description="Укажите `eid`, передайте cookie владельца события и body с изменяемыми полями (`category`, `city`, `price`).",
+    responses={
+        204: {"description": "Событие обновлено"}
+    },
+    openapi_extra={
+        "parameters": [
+            {
+                "name": "Cookie",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string"},
+                "example": "X-Session-Id=3f2b5d9f1d08440fa7a53fdff66fd4f9",
+            }
+        ],
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "example": {"category": "meetup", "city": "Saint Petersburg", "price": 500}
+                }
+            },
+        }
+    },
+)
 async def event_patch(eid: str, request: Request, mongo=Depends(get_mongo), sessions: SessionService = Depends(get_sessions)):
     raw = await request.body()
     sid = extract_sid_cookie(request)
